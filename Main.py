@@ -17,12 +17,12 @@ SHOP_CHANNEL = "tgdesignstore"             # основной канал маг�
 # Данные продавцов (замените на реальные username)
 SELLERS = {
     "seller_1": {
-        "name": "linner",
+        "name": "L1NNER",
         "contact": "@nelinner",
         "reviews": "@otzlinner",
     },
     "seller_2": {
-        "name": "cainfon",
+        "name": "Cainfon",
         "contact": "@CAINFONN_17",
         "reviews": "@cainfonreview",
     },
@@ -96,7 +96,7 @@ async def start_command(message: types.Message):
 
     # Подписан – показываем главное меню
     await message.answer(
-        "Добро пожаловать в магазин дизайна!",
+        "Добро пожаловать в магазин дизайна Design store!",
         reply_markup=main_menu_keyboard()
     )
 
@@ -133,7 +133,7 @@ async def buy_design(callback: types.CallbackQuery):
         return
     await callback.message.delete()
     await callback.message.answer(
-        "🪪 Выберите продавца:",
+        "🪪 Выберите дизайнера на свой вкус:",
         reply_markup=sellers_keyboard()
     )
     await callback.answer()
@@ -147,7 +147,7 @@ async def seller_info(callback: types.CallbackQuery):
 
     seller = SELLERS[callback.data]
     text = (
-        f"📌 Информация о продавце:\n\n"
+        f"📌 Информация о дизайнере:\n\n"
         f"1️⃣ Связь с продавцом: {seller['contact']}\n"
         f"2️⃣ Отзывы продавца: {seller['reviews']}\n"
         f"3️⃣ Отзывы магазина: @{REVIEWS_CHANNEL}\n"
