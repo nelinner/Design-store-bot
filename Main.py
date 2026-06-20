@@ -1,254 +1,420 @@
 import asyncio
 import logging
-import sys
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from typing import Optional
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
+from telegram.error import BadRequest
+import aiohttp
+from bs4 import BeautifulSoup
 
-BOT_TOKEN = "8985680067:AAHROlAyLyMNf91fXw-IdtwQRJxcwda7OG8"
-
-# ID каналов и пользователей
-CHANNEL_USERNAME = "tgdesignstore"
-REVIEWS_CHANNEL = "otzdesingstore"
-MANAGER_USERNAME = "nelinner"
-SHOP_CHANNEL = "tgdesingstore"
-
-# Изображение только для главного меню
-MENU_IMAGE = "https://ibb.co/RpCTX9X0"
-
-SELLERS = {
-    "seller_1": {
-        "name": "LINNER",
-        "contact": "@nelinner",      # Связь с продавцом
-        "portfolio": "@worklinner",   # Портфолио
-        "reviews": "@otzlinner",       # Отзывы продавца
-    },
-    "seller_2": {
-        "name": "Loz",
-        "contact": "@loz306",
-        "portfolio": "@lozagin",
-        "reviews": "@lozagin",
-    },
-    "seller_3": {
-        "name": "cainfon",
-        "contact": "@CAINFONN_17",
-        "portfolio": "@seller3_portfolio",
-        "reviews": "@cainfonreview",
-    },
-    "seller_4": {
-        "name": "В поиске",
-        "contact": "его тута нету",
-        "portfolio": "работ больше чем у других",
-        "reviews": "хз",
-    },
-}
-
+# Включаем логирование
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+# ===== НАСТРОЙКИ =====
+BOT_TOKEN = "8985680067:AAHROlAyLyMNf91fXw-IdtwQRJxcwda7OG8"
+CHANNEL_USERNAME = "@tgdesignstore"
+CHANNEL_ID = "@tgdesignstore"
 
-async def check_subscription(user_id: int) -> bool:
+# Все ссылки на изображения – можно использовать обычные ссылки ibb.co (страницы), бот сам достанет прямые ссылки
+MAIN_MENU_IMAGE = "https://ibb.co/RpCTX9X0"          # Главное меню
+BUY_DESIGN_IMAGE = "https://ibb.co/C5MTqxQ9"         # Раздел «Купить дизайн»
+
+# ===== ДАННЫЕ ПРОДАВЦОВ =====
+SELLERS = {
+    "linner": {
+        "name": "Linner",
+        "description": "💎 Профессиональный дизайнер каналов и логотипов",
+        "image_url": "https://ibb.co/8LXw3Fw8",
+        "fields": {
+            "Username": "@nelinner",
+            "Портфолио": "@worklinner",
+            "Отзывы": "@otzlinner",
+            "Прайс": "https://t.me/pricedesignstore/2",
+        },
+    },
+    "loz": {
+        "name": "Loz",
+        "description": "🎨 Креативный дизайн и уникальный стиль",
+        "image_url": "https://ibb.co/Xk5NGtd0",
+        "fields": {
+            "Username": "@loz306",
+            "Портфолио": "@lozportfolio",
+            "Отзывы": "Вручение от руководителя",
+            "Прайс": "Узнавать в лс",
+        },
+    },
+    "r1polz": {
+        "name": "r1polZ",
+        "description": "🚀 Оформление со стилем",
+        "image_url": "https://ibb.co/8J6HGnk",
+        "fields": {
+            "Username": "@m9Zzzzuta",
+            "Портфолио": "узнавать в лс",
+            "Отзывы": "вручение от руководителя",
+            "Прайс": "узнавать в лс",
+        },
+    },
+    "rassvet": {
+        "name": "Рассвет",
+        "description": "🌅 Стильные решения для твоего проекта",
+        "image_url": "https://ibb.co/Tqc8D19p",   # ← твоя новая ссылка
+        "fields": {
+            "Username": "@PACBETTT",         # ← замени на реальный контакт
+            "Портфолио": "https://t.me/rasvetDesignn",
+            "Отзывы": "вручение от руководителя",
+            "Прайс": "https://t.me/pricedesignstore/3",
+        },
+    },
+    "omut": {
+        "name": "Омут сомнений // asc ",
+        "description": "🌀 Минимализм и атмосферный дизайн, и оформление каналов",
+        "image_url": "https://ibb.co/4nVRrgp9",
+        "fields": {
+            "Username": "@xaywd",
+            "Портфолио": "https://t.me/movaningfx",
+            "Отзывы": "вручение от руководителя",
+            "Прайс": "https://t.me/pricedesignstore/4",
+        },
+    },
+}
+
+# ===== ТЕКСТЫ =====
+RULES_TEXT = (
+    "📃 <b>Регламент магазина</b>\n\n"
+    "1. Перед покупкой обязательно ознакомьтесь с портфолио и отзывами продавца.\n"
+    "2. Все сделки проводятся только через официальных продавцов, указанных в боте.\n"
+    "3. Запрещено передавать контакты продавцов третьим лицам без согласования.\n"
+    "4. Магазин не несёт ответственности за качество работ, если вы обратились к исполнителю "
+    "напрямую, минуя этот бот.\n"
+    "5. Любые споры решаются через руководителя @nelinner.\n"
+    "6. Сохраняйте все чеки и переписки до завершения сделки.\n\n"
+    "Нарушение регламента может привести к блокировке доступа к боту."
+)
+
+SUPPORT_TEXT = (
+    "📞 <b>Поддержка бота</b>\n\n"
+    "Если у вас возникли вопросы, проблемы с ботом или нужна консультация — "
+    "напишите руководителю: <b>@nelinner</b>\n\n"
+    "Пожалуйста, опишите вашу проблему максимально подробно, приложите скриншоты при необходимости."
+)
+
+# ===== КЭШ ДЛЯ ПРЯМЫХ ССЫЛОК =====
+url_cache = {}
+
+async def get_direct_image_url(ibb_url: str) -> Optional[str]:
+    """
+    Превращает ссылку на страницу ibb.co (или уже прямую) в прямую ссылку на изображение.
+    Результат кэшируется в памяти.
+    """
+    # Если ссылка уже прямая (содержит i.ibb.co) – возвращаем как есть
+    if "i.ibb.co" in ibb_url:
+        return ibb_url
+
+    if ibb_url in url_cache:
+        return url_cache[ibb_url]
+
+    # Если это не ibb.co – возвращаем без изменений
+    if "ibb.co" not in ibb_url:
+        return ibb_url
+
     try:
-        member = await bot.get_chat_member(chat_id=f"@{CHANNEL_USERNAME}", user_id=user_id)
-        return member.status in ("member", "administrator", "creator")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(ibb_url, timeout=10) as response:
+                if response.status != 200:
+                    logger.warning(f"Не удалось загрузить страницу {ibb_url}")
+                    return None
+                html = await response.text()
+
+        soup = BeautifulSoup(html, 'html.parser')
+
+        # Ищем прямую ссылку в meta og:image
+        meta_og = soup.find('meta', property='og:image')
+        if meta_og and meta_og.get('content'):
+            direct_url = meta_og['content']
+            url_cache[ibb_url] = direct_url
+            return direct_url
+
+        # Альтернатива: ищем link[rel="image_src"]
+        link_rel = soup.find('link', rel='image_src')
+        if link_rel and link_rel.get('href'):
+            direct_url = link_rel['href']
+            url_cache[ibb_url] = direct_url
+            return direct_url
+
+        # Если ничего не нашли
+        logger.warning(f"Не найдена прямая ссылка на странице {ibb_url}")
+        return None
+
     except Exception as e:
-        logger.error(f"Ошибка проверки подписки: {e}")
+        logger.error(f"Ошибка при парсинге {ibb_url}: {e}")
+        return None
+
+# ===== КЛАВИАТУРЫ =====
+def build_main_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🛍️ Купить дизайн", callback_data="buy_design")],
+        [
+            InlineKeyboardButton("⭐ Отзывы магазина", url="https://t.me/otzdesingstore"),
+            InlineKeyboardButton("🌐 Канал магазина", url="https://t.me/tgdesignstore"),
+        ],
+        [
+            InlineKeyboardButton("📃 Регламент магазина", callback_data="rules"),
+            InlineKeyboardButton("📞 Поддержка бота", callback_data="support"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def build_sellers_keyboard():
+    buttons = []
+    for key, seller in SELLERS.items():
+        buttons.append([InlineKeyboardButton(seller["name"], callback_data=f"seller_{key}")])
+    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(buttons)
+
+def build_seller_detail_keyboard(seller_key: str):
+    seller = SELLERS[seller_key]
+    keyboard = []
+    for field_name, value in seller["fields"].items():
+        if value.startswith("http://") or value.startswith("https://") or value.startswith("@"):
+            url = f"https://t.me/{value[1:]}" if value.startswith("@") else value
+            keyboard.append([InlineKeyboardButton(field_name, url=url)])
+        else:
+            callback_data = f"field_{seller_key}_{field_name}"
+            keyboard.append([InlineKeyboardButton(field_name, callback_data=callback_data)])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_sellers")])
+    return InlineKeyboardMarkup(keyboard)
+
+# ===== ПРОВЕРКА ПОДПИСКИ =====
+async def is_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status in ("member", "administrator", "creator")
+    except BadRequest as e:
+        logger.warning(f"Ошибка проверки подписки: {e}")
         return False
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="🛍️ Купить дизайн", callback_data="buy_design")
+async def require_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    query = update.callback_query
+    user_id = query.from_user.id if query else update.message.from_user.id
+    if await is_subscribed(user_id, context):
+        return True
+
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]]
     )
-    builder.row(
-        InlineKeyboardButton(text="🤝 Отзывы магазина", callback_data="reviews"),
-        InlineKeyboardButton(text="✊ Сотрудничество", callback_data="cooperation")
-    )
-    builder.row(
-        InlineKeyboardButton(text="🌐 Канал магазина", callback_data="channel")
-    )
-    return builder.as_markup()
-
-def sellers_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for key, seller in SELLERS.items():
-        builder.row(InlineKeyboardButton(text=seller["name"], callback_data=key))
-    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu"))
-    return builder.as_markup()
-
-def back_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu"))
-    return builder.as_markup()
-
-async def show_main_menu(chat_id):
-    try:
-        caption = "🎨 Добро пожаловать в магазин дизайна!\nВыберите действие:"
-        await bot.send_photo(
-            chat_id=chat_id,
-            photo=MENU_IMAGE,
-            caption=caption,
-            reply_markup=main_menu_keyboard()
-        )
-        logger.info(f"Главное меню отправлено в чат {chat_id}")
-    except Exception as e:
-        logger.error(f"Ошибка отправки главного меню: {e}")
-        await bot.send_message(
-            chat_id=chat_id,
-            text="🎨 Добро пожаловать в магазин дизайна!\nВыберите действие:",
-            reply_markup=main_menu_keyboard()
-        )
-
-@dp.message(Command("start"))
-async def start_command(message: types.Message):
-    logger.info(f"Пользователь {message.from_user.id} запустил бота")
-    
-    if not await check_subscription(message.from_user.id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="[📲] Подписаться на канал", url=f"https://t.me/{CHANNEL_USERNAME}")],
-            [InlineKeyboardButton(text="[🔄] Проверить подписку", callback_data="check_sub")]
-        ])
-        await message.answer(
-            "⚠️ Для использования бота необходимо подписаться на канал @tgdesignstore.",
-            reply_markup=kb
-        )
-        return
-
-    await show_main_menu(chat_id=message.chat.id)
-
-@dp.callback_query(F.data == "check_sub")
-async def check_sub_callback(callback: types.CallbackQuery):
-    logger.info(f"Проверка подписки для пользователя {callback.from_user.id}")
-    
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
-        return
-
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления сообщения: {e}")
-    
-    await show_main_menu(chat_id=callback.message.chat.id)
-    await callback.answer()
-
-@dp.callback_query(F.data == "main_menu")
-async def back_to_main(callback: types.CallbackQuery):
-    logger.info(f"Возврат в главное меню от пользователя {callback.from_user.id}")
-    
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления сообщения при возврате: {e}")
-    
-    await show_main_menu(chat_id=callback.message.chat.id)
-    await callback.answer()
-
-@dp.callback_query(F.data == "buy_design")
-async def buy_design(callback: types.CallbackQuery):
-    logger.info(f"Пользователь {callback.from_user.id} открыл раздел покупки дизайна")
-    
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("⚠️ Сначала подпишитесь на канал!", show_alert=True)
-        return
-    
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления сообщения: {e}")
-    
-    await callback.message.answer(
-        "🛍️ Выберите себе подходящего дизайнера:",
-        reply_markup=sellers_keyboard()
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data.in_(SELLERS.keys()))
-async def seller_info(callback: types.CallbackQuery):
-    logger.info(f"Пользователь {callback.from_user.id} выбрал продавца {callback.data}")
-    
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("⚠️ Сначала подпишитесь на канал!", show_alert=True)
-        return
-
-    seller = SELLERS[callback.data]
     text = (
-        f"📌 <b>Информация о дизайнере ^w^:</b>\n\n"
-        f"1️⃣ Связь с продавцом: {seller['contact']}\n"
-        f"2️⃣ Портфолио: {seller['portfolio']}\n"
-        f"3️⃣ Отзывы продавца: {seller['reviews']}\n"
-        f"4️⃣ Отзывы магазина: @{REVIEWS_CHANNEL}"
+        "🔒 Для использования бота необходимо быть подписанным на канал "
+        f"{CHANNEL_USERNAME}.\nПодпишись и нажми кнопку ниже."
     )
-    
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления сообщения: {e}")
-    
-    await callback.message.answer(text, reply_markup=back_keyboard(), parse_mode="HTML")
-    await callback.answer()
+    if query:
+        try:
+            await query.message.delete()
+        except BadRequest:
+            pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id, text=text, reply_markup=keyboard
+        )
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard)
+    return False
 
-@dp.callback_query(F.data == "reviews")
-async def reviews(callback: types.CallbackQuery):
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("⚠️ Сначала подпишитесь на канал!", show_alert=True)
+# ===== ОБРАБОТЧИКИ КОМАНД =====
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /start – БЕЗ удаления сообщения пользователя."""
+    # Сообщение /start теперь остаётся в чате
+    if not await is_subscribed(update.message.from_user.id, context):
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]]
+        )
+        await update.message.reply_text(
+            f"🔒 Для использования бота подпишитесь на канал {CHANNEL_USERNAME} и нажмите кнопку.",
+            reply_markup=keyboard,
+        )
         return
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Открыть канал с отзывами", url=f"https://t.me/{REVIEWS_CHANNEL}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu")]
-    ])
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления: {e}")
-    await callback.message.answer("🤝 Отзывы магазина:", reply_markup=kb)
-    await callback.answer()
+    await show_main_menu(update, context, chat_id=update.message.chat_id)
 
-@dp.callback_query(F.data == "cooperation")
-async def cooperation(callback: types.CallbackQuery):
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("⚠️ Сначала подпишитесь на канал!", show_alert=True)
-        return
+async def show_main_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int
+) -> None:
+    # Получаем прямую ссылку для главного меню
+    direct_url = await get_direct_image_url(MAIN_MENU_IMAGE)
+    if direct_url:
+        try:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=direct_url,
+                caption="🏠 <b>Главное меню</b>",
+                parse_mode="HTML",
+                reply_markup=build_main_menu_keyboard(),
+            )
+            return
+        except BadRequest as e:
+            logger.error(f"Ошибка при отправке главного меню: {e}")
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Связаться с руководителем", url=f"https://t.me/{MANAGER_USERNAME}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu")]
-    ])
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления: {e}")
-    await callback.message.answer("✊ Сотрудничество:", reply_markup=kb)
-    await callback.answer()
+    # Если не удалось – текстовый вариант
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="🏠 <b>Главное меню</b>",
+        parse_mode="HTML",
+        reply_markup=build_main_menu_keyboard(),
+    )
 
-@dp.callback_query(F.data == "channel")
-async def shop_channel(callback: types.CallbackQuery):
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("⚠️ Сначала подпишитесь на канал!", show_alert=True)
-        return
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌐 Перейти в канал магазина", url=f"https://t.me/{SHOP_CHANNEL}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu")]
-    ])
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Ошибка удаления: {e}")
-    await callback.message.answer("🌐 Наш основной канал:", reply_markup=kb)
-    await callback.answer()
+    data = query.data
+    user_id = query.from_user.id
 
-async def main():
-    logger.info("Бот запущен!")
-    await dp.start_polling(bot)
+    # Проверка подписки для всех действий, кроме check_sub и field_
+    if data != "check_sub" and not data.startswith("field_"):
+        if not await require_subscription(update, context):
+            return
+
+    # Удаляем предыдущее сообщение бота (не для всплывающих подсказок)
+    if not data.startswith("field_"):
+        try:
+            await query.message.delete()
+        except BadRequest:
+            pass
+
+    if data == "check_sub":
+        if await is_subscribed(user_id, context):
+            try:
+                await query.message.delete()
+            except BadRequest:
+                pass
+            await show_main_menu(update, context, chat_id=query.message.chat_id)
+        else:
+            await query.answer("❌ Вы всё ещё не подписаны на канал!", show_alert=True)
+
+    elif data == "buy_design":
+        direct_url = await get_direct_image_url(BUY_DESIGN_IMAGE)
+        if direct_url:
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=direct_url,
+                    caption="🛍️ <b>Выберите продавца дизайна:</b>",
+                    parse_mode="HTML",
+                    reply_markup=build_sellers_keyboard(),
+                )
+                return
+            except BadRequest:
+                pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🛍️ <b>Выберите продавца дизайна:</b>",
+            parse_mode="HTML",
+            reply_markup=build_sellers_keyboard(),
+        )
+
+    elif data.startswith("seller_"):
+        seller_key = data[len("seller_"):]
+        if seller_key in SELLERS:
+            seller = SELLERS[seller_key]
+            direct_url = await get_direct_image_url(seller["image_url"])
+
+            # Формируем подпись: имя + описание (если есть)
+            caption = f"👤 <b>{seller['name']}</b>"
+            if seller.get("description"):
+                caption += f"\n{seller['description']}"
+
+            if direct_url:
+                try:
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id,
+                        photo=direct_url,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=build_seller_detail_keyboard(seller_key),
+                    )
+                    return
+                except BadRequest:
+                    pass
+            # Запасной текстовый вариант
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=caption,
+                parse_mode="HTML",
+                reply_markup=build_seller_detail_keyboard(seller_key),
+            )
+
+    elif data.startswith("field_"):
+        _, seller_key, field_name = data.split("_", 2)
+        seller = SELLERS.get(seller_key)
+        if seller:
+            text = seller["fields"].get(field_name, "Информация отсутствует")
+            await query.answer(text, show_alert=True)
+
+    elif data == "back_to_main":
+        await show_main_menu(update, context, chat_id=query.message.chat_id)
+
+    elif data == "back_to_sellers":
+        direct_url = await get_direct_image_url(BUY_DESIGN_IMAGE)
+        if direct_url:
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=direct_url,
+                    caption="🛍️ <b>Выберите продавца дизайна:</b>",
+                    parse_mode="HTML",
+                    reply_markup=build_sellers_keyboard(),
+                )
+                return
+            except BadRequest:
+                pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🛍️ <b>Выберите продавца дизайна:</b>",
+            parse_mode="HTML",
+            reply_markup=build_sellers_keyboard(),
+        )
+
+    elif data == "rules":
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
+        )
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=RULES_TEXT,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+    elif data == "support":
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]]
+        )
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=SUPPORT_TEXT,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+    else:
+        await query.answer("Неизвестная команда", show_alert=True)
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+def main() -> None:
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_error_handler(error_handler)
+    logger.info("Бот запущен...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
